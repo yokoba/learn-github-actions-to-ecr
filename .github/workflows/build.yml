@@ -1,0 +1,59 @@
+name: Build And Push
+
+on:
+  push:
+    branches:
+      - test
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REGISTRY: 124512861514.dkr.ecr.ap-northeast-1.amazonaws.com
+  IMAGE_NAME: hello
+
+jobs:
+  build:
+    name: Build And Push To ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout Branch
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      - name: Build Docker image
+        id: build
+        run: |
+          # ビルドしてイメージをタグ付け
+          docker build -t ${{ env.IMAGE_NAME }} .
+          # 今日の日付を取得
+          DATE_TAG=$(date +'%Y%m%d')
+          # コンテナIDの取得
+          CONTAINER_ID=$(docker images -q ${{ env.IMAGE_NAME }})
+          # コンテナのハッシュを取得
+          IMAGE_HASH=$(docker inspect --format='{{.Id}}' $CONTAINER_ID | cut -d ':' -f 2 | cut -c 1-12)
+          # タグの作成
+          TAG="${DATE_TAG}-${IMAGE_HASH}"
+          # タグを付ける
+          docker tag ${{ env.IMAGE_NAME }} ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}
+          # タグを確認
+          echo "::set-output name=TAG::${TAG}"
+          echo "Generated tag: ${TAG}"
+
+      - name: Push Docker image to ECR
+        run: |
+          # 生成したタグをプッシュする
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.build.outputs.TAG }}
